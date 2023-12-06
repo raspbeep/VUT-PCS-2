@@ -4,22 +4,19 @@
 --
 -- SPDX-License-Identifier: BSD-3-Clause
 
-
-
 library IEEE;
 use IEEE.std_logic_1164.all;
 use IEEE.numeric_std.all;
 use IEEE.std_logic_unsigned.all;
 use IEEE.std_logic_arith.all;
 
-
-
 entity jenkins_hash is
   generic(
     -- Width of hashed key in 32-bit words.
     LENGTH          : natural := 1;
     -- Initialization seed value.
-    INITVAL         : std_logic_vector(32-1 downto 0) := X"DEADBABE"
+    INITVAL         : std_logic_vector(32-1 downto 0) := X"DEADBABE";
+    DELAY_CYCLES : natural := 1 
   );
   port (
     -- Main clock signal and its synchronous reset.
@@ -34,8 +31,6 @@ entity jenkins_hash is
     OUTPUT_VALID    : out std_logic                               -- delayed input valid
   );
 end entity;
-
-
 
 architecture behavioral of jenkins_hash is
 
@@ -52,17 +47,20 @@ architecture behavioral of jenkins_hash is
   end record;
   type computation_stage_array is array(natural range <>) of computation_stage;
 
-  signal mix_stage : computation_stage_array(0 to MIX_STAGES);
-  signal mix_to_final : computation_stage;
+  signal mix_stage      : computation_stage_array(0 to MIX_STAGES);
+  signal mix_to_final   : computation_stage;
+  signal mix_to_delay   : computation_stage;
+  signal delay_to_final : computation_stage;
 
   signal final_adders : computation_stage;
   signal final_key_part : std_logic_vector(FINAL_LENGTH*32-1 downto 0);
+  signal delay_register : computation_stage;
 
 begin
 
   -- Unsupported configurations checks -----------------------------------------
   assert LENGTH > 0 report "FAILURE: Jenkins Hash key must be at least one word wide!" severity failure;
-
+  
   -- Set up the internal state -------------------------------------------------
   mix_stage(0).a <= INITIAL_VALUE;
   mix_stage(0).b <= INITIAL_VALUE;
@@ -101,32 +99,46 @@ begin
       OUTPUT_VALID => mix_stage(s+1).valid
     );
   end generate;
-  mix_to_final <= mix_stage(MIX_STAGES); -- output from the last mix stage is input for final
+  -- mix_to_delay <= mix_stage(MIX_STAGES); -- output from the last mix stage is input for final
 
+  -- Implement the delay logic
+  delay_logic: process(CLK, RESET)
+  begin
+    -- if RESET = '1' then
+    --     delay_register.a <= (others => '0');
+    --     delay_register.b <= (others => '0');
+    --     delay_register.c <= (others => '0');        
+    --     delay_register.key <= (others => '0');
+    --     delay_register.valid <= '0';
+    if rising_edge(CLK) then
+        delay_register <= mix_stage(MIX_STAGES);
+    end if;
+  end process;
+  delay_to_final <= delay_register;
 
   -- Handle the last 3 words ---------------------------------------------------
   -- initial adding with key words for given length
-  final_key_part <= mix_to_final.key(LENGTH*32-1 downto LENGTH*32-FINAL_LENGTH*32);
+  final_key_part <= delay_to_final.key(LENGTH*32-1 downto LENGTH*32-FINAL_LENGTH*32);
   final_length3: if FINAL_LENGTH = 3 generate
-    final_adders.c <= mix_to_final.c + final_key_part(96-1 downto 64);
-    final_adders.b <= mix_to_final.b + final_key_part(64-1 downto 32);
-    final_adders.a <= mix_to_final.a + final_key_part(32-1 downto 0);
+    final_adders.c <= delay_to_final.c + final_key_part(96-1 downto 64);
+    final_adders.b <= delay_to_final.b + final_key_part(64-1 downto 32);
+    final_adders.a <= delay_to_final.a + final_key_part(32-1 downto 0);
   end generate;
   final_length2: if FINAL_LENGTH = 2 generate
-    final_adders.c <= mix_to_final.c;
-    final_adders.b <= mix_to_final.b + final_key_part(64-1 downto 32);
-    final_adders.a <= mix_to_final.a + final_key_part(32-1 downto 0);
+    final_adders.c <= delay_to_final.c;
+    final_adders.b <= delay_to_final.b + final_key_part(64-1 downto 32);
+    final_adders.a <= delay_to_final.a + final_key_part(32-1 downto 0);
   end generate;
   final_length1: if FINAL_LENGTH = 1 generate
-    final_adders.c <= mix_to_final.c;
-    final_adders.b <= mix_to_final.b;
-    final_adders.a <= mix_to_final.a + final_key_part(32-1 downto 0);
+    final_adders.c <= delay_to_final.c;
+    final_adders.b <= delay_to_final.b;
+    final_adders.a <= delay_to_final.a + final_key_part(32-1 downto 0);
   end generate;
   final_length0: if FINAL_LENGTH = 0 generate
     assert false report "FAILURE: Jenkins Hash impossible generate state reached in final stage!" severity failure;
   end generate;
-  final_adders.key <= mix_to_final.key;
-  final_adders.valid <= mix_to_final.valid;
+  final_adders.key <= delay_to_final.key;
+  final_adders.valid <= delay_to_final.valid;
   -- final operation itself
   final: entity work.jenkins_final
   generic map (

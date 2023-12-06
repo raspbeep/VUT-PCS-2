@@ -130,6 +130,7 @@ begin
   hash_generate: for t in 0 to TABLES-1 generate
     signal local_key : std_logic_vector(KEY_WORDS*32-1 downto 0);
     signal local_valid : std_logic;
+    signal delayed_hash_key : std_logic_vector(KEY_WIDTH-1 downto 0); -- Signal for delayed hash_key
   begin
     hash: entity work.jenkins_hash
     generic map (
@@ -144,6 +145,18 @@ begin
       OUTPUT_KEY      => local_key,
       OUTPUT_VALID    => hash_valid(t)
     );
+      -- process(CLK, RESET)
+      -- begin
+      -- --   if RESET = '1' then
+      -- --     delayed_hash_key <= (others => '0'); -- Reset the delayed key
+      -- if rising_edge(CLK) then
+      --     delayed_hash_key <= local_key(KEY_WIDTH-1 downto 0); -- Capture the key for a one clock delay
+      --   end if;
+      -- end process;
+    
+      -- key_valid_connection: if t = 0 generate
+      --   hash_key <= delayed_hash_key; -- Use the delayed hash_key here
+      -- end generate;
     key_valid_connection: if t = 0 generate -- key is pipelined inside the hash for table #0
       hash_key <= local_key(KEY_WIDTH-1 downto 0);
     end generate;
